@@ -1,7 +1,3 @@
-# kabunavi_jp.py
-# Kabunavi - 日本株ポートフォリオナビ
-# ３段棒グラフ＋テクニカル４段チャートで日本株を直感分析
-
 import streamlit as st
 import pandas as pd
 import io
@@ -12,16 +8,31 @@ import matplotlib
 import numpy as np
 import plotly.colors
 
-# --- 1. グラフで日本語ラベルが文字化けしないようmatplotlibを設定
+# ---- 表の文字サイズ小さくするCSS ----
+st.markdown(
+    """
+    <style>
+    .stDataFrame [data-testid="stMarkdownContainer"] td, .stDataFrame [data-testid="stTable"] td {
+        font-size:9px;
+    }
+    .stDataFrame table th {
+        font-size:9px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# ---- matplotlib日本語対応 ----
 matplotlib.rcParams['font.family'] = 'Meiryo'
 
-# --- 2. ログイン認証：安全運用用（必要なければスキップでもOK）
+# ---- ログイン認証省略可（元スクリプト通り） ----
 def login():
     st.session_state['authenticated'] = False
     with st.form("login_form"):
         code = st.text_input("招待コード", type="password")
         submit = st.form_submit_button("ログイン")
-        valid_codes = {"WodiVh_yqPor@54657&w"}     # あなたが指定したパスコード
+        valid_codes = {"WodiVh_yqPor@54657&w"}
         if submit:
             if code in valid_codes:
                 st.session_state['authenticated'] = True
@@ -35,7 +46,7 @@ if "authenticated" not in st.session_state or not st.session_state["authenticate
     login()
     st.stop()
 
-# --- 3. アプリのタイトル（画面最上部）・操作ガイダンス
+# ---- タイトル＆ガイダンス ----
 st.title("Kabunavi - 日本株ポートフォリオナビ")
 st.markdown("#### SBI証券の日本株ポートフォリオCSVで「損益・配当・利回り・テクニカル指標」まで全自動でわかりやすく分析できるアプリです。")
 st.caption("""
@@ -45,12 +56,8 @@ st.caption("""
 4. 「売られすぎ・買われすぎ」ライン等も表示し、投資判断にすぐ役立つダッシュボードです。
 """)
 
-# --- 4. CSV解析用・区分ごとテーブル抽出の補助関数 ---
+# ---- CSVファイル解析補助関数 ----
 def parse_sections(lines, section_configs):
-    """
-    - SBI証券のCSVファイル（区分ごとに分かれている）から、各区分ごとのデータフレームを抜き出します
-    - 区分名・ヘッダ位置など仕組みは事前設定ずみ。初心者でも特に意識せず使えます
-    """
     tables = {}
     for conf in section_configs:
         title = conf["title"]
@@ -75,7 +82,7 @@ def parse_sections(lines, section_configs):
                     continue
     return tables
 
-# --- 5. ファイルアップロード（画面左上）と自動切換え区分タブ
+# ---- CSVアップロード・区分 ----
 uploaded_file = st.file_uploader(
     "⬆️ ① SBI証券の日本株ポートフォリオCSVファイルを選択orドラッグしてください",
     type=["csv", "txt"]
@@ -102,14 +109,13 @@ selected_tab = st.selectbox("② 保有口座区分（特定 or NISA）を選択
 df = tables[selected_tab]
 st.dataframe(df, use_container_width=True, height=220)
 
-# --- 6. 必要な列・データ変換＆各指標の本格自動取得 ---
+# ---- 列変換＋指標自動取得 ----
 if "銘柄名称" in df.columns and "銘柄コード" in df.columns:
-    # 【初心者向けポイント】
-    # 証券CSVの各数値列をpandasでちゃんと数値に変換します（分析やグラフ描画で型エラー防止のため）
+    # 主要列を数値型変換
     for col in ["保有株数", "取得単価", "現在値", "取得金額", "評価額", "評価損益"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-    # 【配当利回り・RSI等は完全自動取得！】
+    # 指標自動取得（配当利回り、RSI、最新終値）
     df["配当利回り"], df["RSI"], df["最新終値"] = None, None, None
     for i, row in df.iterrows():
         code = str(row["銘柄コード"])
@@ -135,7 +141,7 @@ if "銘柄名称" in df.columns and "銘柄コード" in df.columns:
         if close_now is not None:
             df.at[i, "最新終値"] = close_now
 
-    # 年利（配当利回り）が1.0超なら自動で%補正、取得単価や最新終値ももとに実利回り計算
+    # 実利回り計算
     if df["配当利回り"].max() is not None and df["配当利回り"].max() > 1:
         df["配当利回り"] = df["配当利回り"] / 100
     if {"配当利回り", "取得単価", "最新終値"}.issubset(df.columns):
@@ -143,7 +149,7 @@ if "銘柄名称" in df.columns and "銘柄コード" in df.columns:
     else:
         df["実利回り"] = None
 
-    # ◆ Webグラフ用のデータ加工
+    # ------ グラフ用加工 ------
     plot_df = df[["銘柄名称", "配当利回り", "実利回り", "評価損益", "RSI"]].copy()
     for col in ["配当利回り", "実利回り", "評価損益", "RSI"]:
         plot_df[col] = pd.to_numeric(plot_df[col], errors="coerce").fillna(0)
@@ -155,13 +161,8 @@ if "銘柄名称" in df.columns and "銘柄コード" in df.columns:
     col_rsi  = [color_map[name] for name in categories]
     col_div  = [color_map[name] for name in categories]
 
-    # --- ★1. ポートフォリオ全体３段棒グラフ（可視化の主役） ---
+    # ---- ③ 3段グラフ：凡例をグラフ外右端へ ----
     st.markdown("### ③ 損益・利回り・RSIの３段グラフ（保有銘柄を一目で整理）")
-    st.caption("""
-    - 【1段目】評価損益（いくら得した？損した？）
-    - 【2段目】配当利回りバー＋実利回り（折線）で配当面も見える
-    - 【3段目】RSI14日（買われすぎ・売られすぎ、も色分けラインで明快！）
-    """)
     fig = make_subplots(
         rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.04,
         subplot_titles=["評価損益（円）", "配当利回り（バー）＋実利回り（折線）[%]", "RSI（14日）"]
@@ -171,20 +172,19 @@ if "銘柄名称" in df.columns and "銘柄コード" in df.columns:
     fig.add_trace(go.Scatter(x=categories, y=plot_df["実利回り"]*100, name="実利回り（％）", mode="lines+markers",
         line=dict(color="#ff7f0e", width=3), marker=dict(symbol="circle", size=8, color="#ff7f0e")), row=2, col=1)
     fig.add_trace(go.Bar(x=categories, y=plot_df["RSI"], name="RSI（14日）", marker_color=col_rsi), row=3, col=1)
-    # --- RSI分析「30/70ライン」で買われすぎ・売られすぎを色で明確化
     fig.add_shape(type="line", x0=-0.5, x1=len(categories)-0.5, y0=70, y1=70,
-                 xref="x3", yref="y3",
-                 line=dict(color="red", width=2, dash="dot"), row=3, col=1)
+                  xref="x3", yref="y3",
+                  line=dict(color="red", width=2, dash="dot"), row=3, col=1)
     fig.add_shape(type="line", x0=-0.5, x1=len(categories)-0.5, y0=30, y1=30,
-                 xref="x3", yref="y3",
-                 line=dict(color="blue", width=2, dash="dot"), row=3, col=1)
+                  xref="x3", yref="y3",
+                  line=dict(color="blue", width=2, dash="dot"), row=3, col=1)
+    # --- ③ 3段グラフ：凡例を非表示（完全に消す） ---
     fig.update_layout(
         height=715,
         barmode="group",
-        margin=dict(t=62, l=18, r=0, b=36),
-        legend=dict(yanchor="top", y=1, xanchor="left", x=1.02, font=dict(size=11)),
-        font=dict(size=12),
-        showlegend=True,
+        margin=dict(t=62, l=18, r=36, b=36),  # 右側余裕も通常サイズに
+        font=dict(size=9),
+        showlegend=False  # ← 凡例を消す
     )
     for r in range(1,4):
         fig.update_xaxes(tickangle=45, tickfont=dict(size=10), row=r, col=1)
@@ -194,15 +194,8 @@ if "銘柄名称" in df.columns and "銘柄コード" in df.columns:
     fig.update_yaxes(title_text="RSI", row=3, col=1, range=[0,100])
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- ★2. テクニカル指標４段グラフ（タイムライン推移、直近値も吹き出しで強調）---
+    # ---- ④ 4段グラフ テクニカル指標 ----
     st.markdown("### ④ テクニカル指標チャート（詳細：移動平均・BB・MACD・RSI・出来高すべて）")
-    st.caption("""
-    - 終値（日足）は太線・色分け
-    - ボリンジャーバンドの±2σ帯はグレー半透明で塗りつぶし！
-    - RSIには買われすぎ/売られすぎ（70/30）ライン付き
-    - 凡例は主役から順！最新の終値・取得単価・RSI・出来高は吹き出し注釈で直感把握
-    - 銘柄の名前を選ぶだけで、プロ並みの“これぞ日本株チャート”を即チェック
-    """)
     choices = plot_df["銘柄名称"].tolist()
     sel_name = st.selectbox("⑤ テクニカル分析を見たい銘柄をクリックで選択", choices)
     row = df[df["銘柄名称"] == sel_name].iloc[0]
@@ -216,24 +209,23 @@ if "銘柄名称" in df.columns and "銘柄コード" in df.columns:
         start = end - pd.Timedelta(days=90)
         hist2 = hist[(hist.index >= start) & (hist.index <= end)]
         if len(hist2) > 10:
-            # ▼各テクニカル指標の自動計算（初心者は意識不要、全部自動！）▼
             ma_short = hist["Close"].rolling(window=5).mean()
-            ma_mid = hist["Close"].rolling(window=25).mean()
-            ma_long = hist["Close"].rolling(window=75).mean()
+            ma_mid   = hist["Close"].rolling(window=25).mean()
+            ma_long  = hist["Close"].rolling(window=75).mean()
             ma_short2 = ma_short.loc[hist2.index]
-            ma_mid2 = ma_mid.loc[hist2.index]
-            ma_long2 = ma_long.loc[hist2.index]
+            ma_mid2   = ma_mid.loc[hist2.index]
+            ma_long2  = ma_long.loc[hist2.index]
             window_bb = 20
-            ma_bb = hist["Close"].rolling(window=window_bb).mean()
-            std_bb = hist["Close"].rolling(window=window_bb).std()
-            upper2 = ma_bb + 2 * std_bb
-            lower2 = ma_bb - 2 * std_bb
-            ma_bb2 = ma_bb.loc[hist2.index]
-            upper2_2 = upper2.loc[hist2.index]
-            lower2_2 = lower2.loc[hist2.index]
-            ema12 = hist["Close"].ewm(span=12).mean()
-            ema26 = hist["Close"].ewm(span=26).mean()
-            macd = ema12 - ema26
+            ma_bb   = hist["Close"].rolling(window=window_bb).mean()
+            std_bb  = hist["Close"].rolling(window=window_bb).std()
+            upper2  = ma_bb + 2 * std_bb
+            lower2  = ma_bb - 2 * std_bb
+            ma_bb2     = ma_bb.loc[hist2.index]
+            upper2_2   = upper2.loc[hist2.index]
+            lower2_2   = lower2.loc[hist2.index]
+            ema12  = hist["Close"].ewm(span=12).mean()
+            ema26  = hist["Close"].ewm(span=26).mean()
+            macd   = ema12 - ema26
             signal = macd.ewm(span=9).mean()
             macd_hist = macd - signal
             macd2 = macd.loc[hist2.index]
@@ -259,16 +251,12 @@ if "銘柄名称" in df.columns and "銘柄コード" in df.columns:
                     "出来高 [万株]"
                 ]
             )
-            last_date = hist2.index[-1]
-            annos = []
-
-            # ▼「上ほど主役」になるように逆順add_trace（これが凡例順コントロールのキモ！）▼
+            # ---- trace（凡例＝グラフ外右、吹き出しなし） ----
             fig2.add_trace(go.Bar(x=hist2.index, y=volume2, name='出来高', marker_color='gray', opacity=0.5), row=4, col=1)
             fig2.add_trace(go.Scatter(x=hist2.index, y=rsi2, name='RSI', line=dict(color='purple')), row=3, col=1)
             fig2.add_trace(go.Bar(x=hist2.index, y=macd_hist2, name='MACDヒストグラム', marker_color='gray', opacity=0.4), row=2, col=1)
             fig2.add_trace(go.Scatter(x=hist2.index, y=signal2, name='シグナル', line=dict(color='orange', dash='dot')), row=2, col=1)
             fig2.add_trace(go.Scatter(x=hist2.index, y=macd2, name='MACD', line=dict(color='green')), row=2, col=1)
-            # BB±2σ帯：必ず「上限→下限」連続でtrace（これが“塗りつぶし”のコツ！）
             fig2.add_trace(go.Scatter(
                 x=hist2.index, y=upper2_2,
                 name='BB２σ（上限）',
@@ -288,7 +276,7 @@ if "銘柄名称" in df.columns and "銘柄コード" in df.columns:
             fig2.add_trace(go.Scatter(x=hist2.index, y=ma_mid2, name='移動平均25日', line=dict(color='green', dash='dash')), row=1, col=1)
             fig2.add_trace(go.Scatter(x=hist2.index, y=ma_short2, name='移動平均5日', line=dict(color='orange', dash='dash')), row=1, col=1)
             fig2.add_trace(go.Scatter(x=hist2.index, y=hist2["Close"], name='終値', line=dict(color='blue', width=3)), row=1, col=1)
-            # 取得単価ライン（水色破線で分かりやすく）
+            # 取得単価ライン
             if shuutoku and not np.isnan(shuutoku):
                 fig2.add_shape(
                     type="line",
@@ -296,35 +284,7 @@ if "銘柄名称" in df.columns and "銘柄コード" in df.columns:
                     line=dict(color="deepskyblue", width=2, dash="dot"),
                     xref="x1", yref="y1"
                 )
-
-            # 段ごと主役指標の“吹き出し”注釈
-            annos.append(dict(
-                x=last_date, y=hist2["Close"].iloc[-1], xanchor="left", yanchor="middle",
-                text=f"終値:{hist2['Close'].iloc[-1]:,.2f}", showarrow=True, arrowhead=1,
-                font=dict(size=11, color="blue"), bgcolor="white", bordercolor="blue",
-                ax=32, ay=0, xref="x1", yref="y1"
-            ))
-            if shuutoku and not np.isnan(shuutoku):
-                annos.append(dict(
-                    x=last_date, y=shuutoku, xanchor="left", yanchor="top",
-                    text=f"取得単価:{shuutoku:,.2f}", showarrow=True, arrowhead=1,
-                    font=dict(size=11, color="deepskyblue"), bgcolor="white", bordercolor="deepskyblue",
-                    ax=32, ay=-22, xref="x1", yref="y1"
-                ))
-            annos.append(dict(
-                x=last_date, y=rsi2.iloc[-1], xanchor="left", yanchor="middle",
-                text=f"RSI:{rsi2.iloc[-1]:.1f}", showarrow=True, arrowhead=1,
-                font=dict(size=11, color="purple"), bgcolor="white", bordercolor="purple",
-                ax=28, ay=0, xref="x3", yref="y3"
-            ))
-            annos.append(dict(
-                x=last_date, y=volume2.iloc[-1], xanchor="left", yanchor="top",
-                text=f"出来高:{volume2.iloc[-1]:,.0f}万株", showarrow=True, arrowhead=1,
-                font=dict(size=11, color="gray"), bgcolor="white", bordercolor="gray",
-                ax=24, ay=-16, xref="x4", yref="y4"
-            ))
-
-            # RSIに「売られすぎ30／買われすぎ70ライン」を赤青で明確描画
+            # RSI買われすぎ/売られすぎ
             fig2.add_shape(
                 type="line", x0=hist2.index[0], x1=hist2.index[-1], y0=70, y1=70,
                 xref="x3", yref="y3",
@@ -338,21 +298,37 @@ if "銘柄名称" in df.columns and "銘柄コード" in df.columns:
                 row=3, col=1
             )
 
+            # ---- レイアウト: グラフ内にコンパクトに凡例を表示
             fig2.update_layout(
-                height=700,
                 legend=dict(
-                    orientation="v",
-                    x=1.02, xanchor="left",
-                    y=1, yanchor="top",
-                    font=dict(size=11)
+                    x=0.02,                     # 右端に近い位置（グラフ内0.98）
+                    xanchor="left",
+                    y=0.02,                     # 上端（グラフ内0.98）
+                    yanchor="bottom",
+                    font=dict(size=8),          # 文字サイズ小さく
+                    bgcolor="rgba(255,255,255,0.2)", # 背景半透明で主役のグラフと重なっても見やすい
+                    tracegroupgap=2,            # アイテム間余白を詰める
+                    borderwidth=0,              # 枠なし
+                    itemsizing="constant",      # （必要に応じて）マーカー最小固定
+                    itemwidth=30                # アイテム横幅も小さく
                 ),
-                margin=dict(l=34, t=42, r=125, b=24),
-                font=dict(size=11),
-                showlegend=True,
-                annotations=annos
+                # 他のレイアウト設定...
+                height=900,       # ← 全体の高さを700→900など大きめにしてゆとり
+                font=dict(size=8) # ラベル等も少し小さめに整える
             )
-            fig2.update_xaxes(tickformat="%m/%d", tickangle=45, tickfont=dict(size=10), row=1, col=1)
-            fig2.update_xaxes(dtick="W1", row=1, col=1)
+
+            # ---- x軸日付設定：週ごと/mmdd/45度/右端ピッタリ ----
+            latest = hist2.index[-1]
+            first = hist2.index[0]
+            for r in range(1, 5):
+                fig2.update_xaxes(
+                    range=[first, latest],
+                    tickformat='%m/%d',
+                    tickangle=45,
+                    dtick=604800000,  # 7日（=604800000ミリ秒）
+                    row=r, col=1
+                )
+
             st.plotly_chart(fig2, use_container_width=True)
         else:
             st.info(f"{name} ({code}) の過去3ヶ月チャート情報が取得できません（銘柄コードミスやデータ少ない等）。")
@@ -360,3 +336,4 @@ if "銘柄名称" in df.columns and "銘柄コード" in df.columns:
         st.warning(f"{name} ({code}) チャート描画に失敗しました: {e}")
 else:
     st.info("「銘柄名称」「銘柄コード」列がCSVに無い、またはヘッダが不正です。")
+
